@@ -223,6 +223,15 @@ module Spaceship
     end
 
     #####################################################
+    # @!group Analytics
+    #####################################################
+
+    def app_analytics
+        r = request(:get, "https://analytics.itunes.apple.com/analytics/api/v1/data/app-list")
+        parse_response(r, 'results')
+    end
+
+    #####################################################
     # @!group Build Trains
     #####################################################
 
