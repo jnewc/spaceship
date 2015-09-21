@@ -177,6 +177,10 @@ module Spaceship
 
           return self.factory(attrs)
         end
+
+        def analytics
+            return client.app_analytics
+        end
       end
 
       # @return (Bool) Is that version currently available in the App Store?
