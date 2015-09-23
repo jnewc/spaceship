@@ -227,7 +227,13 @@ module Spaceship
     #####################################################
 
     def app_analytics
-        r = request(:get, "https://analytics.itunes.apple.com/analytics/api/v1/data/app-list")
+        body = '{"adamId":["911826430","395747791","502102448","448136567","615238455","656589141","682436712","706000490","600932477","566347057","748246908","689179217","495607955","915469491"],"measures":["pageViewCount","units","sales","sessions"],"frequency":"DAY","endTime":"2015-09-20T00:00:00Z","startTime":"2015-08-22T00:00:00Z"}'
+        r = request(:post) do |req|
+          req.url "https://analytics.itunes.apple.com/analytics/api/v1/data/app-list"
+          req.body = body
+          req.headers['Content-Type'] = 'application/json'
+          req.headers['X-Requested-By'] = 'analytics.itunes.apple.com'
+        end
         parse_response(r, 'results')
     end
 
