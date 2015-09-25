@@ -1,3 +1,5 @@
+require 'time'
+
 # rubocop:disable Metrics/ClassLength
 module Spaceship
   class TunesClient < Spaceship::Client
@@ -226,15 +228,42 @@ module Spaceship
     # @!group Analytics
     #####################################################
 
-    def app_analytics
-        body = '{"adamId":["911826430","395747791","502102448","448136567","615238455","656589141","682436712","706000490","600932477","566347057","748246908","689179217","495607955","915469491"],"measures":["pageViewCount","units","sales","sessions"],"frequency":"DAY","endTime":"2015-09-20T00:00:00Z","startTime":"2015-08-22T00:00:00Z"}'
+    def analytics_applist(apps, measures, start_date, end_date)
+        puts "analytics_applist: " + start_date.to_s + " " + end_date.to_s
+        data = {
+            adamId: apps,
+            measures: measures,
+            frequency: "DAY",
+            startTime: start_date.to_s + "T00:00:00Z",
+            endTime: end_date.to_s  + "T00:00:00Z"
+        }
+
         r = request(:post) do |req|
           req.url "https://analytics.itunes.apple.com/analytics/api/v1/data/app-list"
-          req.body = body
+          req.body = data.to_json
           req.headers['Content-Type'] = 'application/json'
           req.headers['X-Requested-By'] = 'analytics.itunes.apple.com'
         end
         parse_response(r, 'results')
+    end
+
+    def analytics_time_series(apps, measures, start_date, end_date)
+      puts "analytic_time_series: " + start_date.to_s + " " + end_date.to_s
+      data = {
+          adamId: apps,
+          measures: measures,
+          frequency: "DAY",
+          startTime: start_date.to_s + "T00:00:00Z",
+          endTime: end_date.to_s  + "T00:00:00Z"
+      }
+
+      r = request(:post) do |req|
+        req.url "https://analytics.itunes.apple.com/analytics/api/v1/data/time-series"
+        req.body = data.to_json
+        req.headers['Content-Type'] = 'application/json'
+        req.headers['X-Requested-By'] = 'analytics.itunes.apple.com'
+      end
+      parse_response(r, 'results')
     end
 
     #####################################################
