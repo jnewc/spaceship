@@ -1,3 +1,3 @@
 module Spaceship
-  VERSION = "0.7.0"
+  VERSION = "0.19.3"
 end

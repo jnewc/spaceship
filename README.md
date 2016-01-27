@@ -1,23 +1,24 @@
 <h3 align="center">
-  <a href="https://github.com/KrauseFx/fastlane">
+  <a href="https://github.com/fastlane/fastlane">
     <img src="assets/fastlane.png" width="100" />
     <br />
     fastlane
   </a>
 </h3>
 <p align="center">
-  <a href="https://github.com/KrauseFx/deliver">deliver</a> &bull;
-  <a href="https://github.com/KrauseFx/snapshot">snapshot</a> &bull;
-  <a href="https://github.com/KrauseFx/frameit">frameit</a> &bull;
-  <a href="https://github.com/KrauseFx/PEM">PEM</a> &bull;
-  <a href="https://github.com/KrauseFx/sigh">sigh</a> &bull;
-  <a href="https://github.com/KrauseFx/produce">produce</a> &bull;
-  <a href="https://github.com/KrauseFx/cert">cert</a> &bull;
-  <a href="https://github.com/KrauseFx/codes">codes</a> &bull;
+  <a href="https://github.com/fastlane/deliver">deliver</a> &bull; 
+  <a href="https://github.com/fastlane/snapshot">snapshot</a> &bull; 
+  <a href="https://github.com/fastlane/frameit">frameit</a> &bull; 
+  <a href="https://github.com/fastlane/pem">pem</a> &bull; 
+  <a href="https://github.com/fastlane/sigh">sigh</a> &bull; 
+  <a href="https://github.com/fastlane/produce">produce</a> &bull;
+  <a href="https://github.com/fastlane/cert">cert</a> &bull;
   <b>spaceship</b> &bull;
   <a href="https://github.com/fastlane/pilot">pilot</a> &bull;
   <a href="https://github.com/fastlane/boarding">boarding</a> &bull;
-  <a href="https://github.com/fastlane/gym">gym</a>
+  <a href="https://github.com/fastlane/gym">gym</a> &bull;
+  <a href="https://github.com/fastlane/scan">scan</a> &bull;
+  <a href="https://github.com/fastlane/match">match</a>
 </p>
 -------
 
@@ -26,7 +27,7 @@
 </p>
 -------
 
-[![Twitter: @KauseFx](https://img.shields.io/badge/contact-@KrauseFx-blue.svg?style=flat)](https://twitter.com/KrauseFx)
+[![Twitter: @FastlaneTools](https://img.shields.io/badge/contact-@KrauseFx-blue.svg?style=flat)](https://twitter.com/KrauseFx)
 [![License](http://img.shields.io/badge/license-MIT-green.svg?style=flat)](https://github.com/fastlane/spaceship/blob/master/LICENSE)
 [![Coverage Status](https://coveralls.io/repos/fastlane/spaceship/badge.svg?branch=master&t=ldL8gg)](https://coveralls.io/r/fastlane/spaceship?branch=master)
 [![Gem](https://img.shields.io/gem/v/spaceship.svg?style=flat)](http://rubygems.org/gems/spaceship)
@@ -55,7 +56,7 @@ spaceship is a Ruby library that exposes both the Apple Developer Center and the
 
 Up until now, the [fastlane tools](https://fastlane.tools) used web scraping to interact with Apple's web services. With spaceship it is possible to directly access the underlying APIs using a simple HTTP client only.
 
-Using spaceship, the execution time of [sigh](https://github.com/KrauseFx/sigh) was reduced from over 1 minute to less than 5 seconds.
+Using spaceship, the execution time of [sigh](https://github.com/fastlane/sigh) was reduced from over 1 minute to less than 5 seconds.
 
 spaceship uses a combination of 3 different API endpoints, used by the Apple Developer Portal and Xcode. As no API offers everything we need, spaceship combines all APIs for you. [More details about the APIs](#technical-details).
 
@@ -94,6 +95,12 @@ How fast are tools using `spaceship` compared to web scraping?
     sudo gem install spaceship
 
 # Usage
+
+## Playground
+
+To try `spaceship`, just run `spaceship`. It will automatically start the `spaceship playground`. It makes it super easy to try `spaceship` :rocket:
+
+![assets/docs/Playground.png](assets/docs/Playground.png)
 
 ## Apple Developer Portal API
 
@@ -148,7 +155,9 @@ I won't go into too much technical details about the various API endpoints, but 
  - Managing apps
  - Managing beta testers
  - Submitting updates to review
- - Manaing app metadata
+ - Managing app metadata
+- `https://du-itc.itunesconnect.apple.com`:
+ - Upload icons, screenshots, trailers ...
 
 `spaceship` uses all those API points to offer this seamless experience.
 
@@ -176,6 +185,9 @@ The initial release was sponsored by [ZeroPush](https://zeropush.com).
 [Open full list of contributors](https://github.com/fastlane/spaceship/graphs/contributors).
 
 ##### [Like this tool? Be the first to know about updates and new fastlane tools](https://tinyletter.com/krausefx)
+
+# Code of Conduct
+Help us keep `fastlane` open and inclusive. Please read and follow our [Code of Conduct](https://github.com/fastlane/code-of-conduct).
 
 # License
 This project is licensed under the terms of the MIT license. See the LICENSE file.

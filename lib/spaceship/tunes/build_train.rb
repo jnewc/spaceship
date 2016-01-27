@@ -3,7 +3,6 @@ module Spaceship
     # Represents a build train of builds from iTunes Connect
     # A build train is all builds for a given version number with different build numbers
     class BuildTrain < TunesBase
-
       # @return (Spaceship::Tunes::Application) A reference to the application
       #   this train is for
       attr_accessor :application
@@ -62,24 +61,45 @@ module Spaceship
       def setup
         super
 
-        @builds = self.raw_data['builds'].collect do |attrs|
+        @builds = (self.raw_data['builds'] || []).collect do |attrs|
           attrs.merge!(build_train: self)
           Tunes::Build.factory(attrs)
         end
 
-        @processing_builds = self.raw_data['buildsInProcessing'].collect do |attrs|
+        @processing_builds = (self.raw_data['buildsInProcessing'] || []).collect do |attrs|
           attrs.merge!(build_train: self)
           Tunes::Build.factory(attrs)
+        end
+
+        # since buildsInProcessing appears empty, fallback to also including processing state from @builds
+        @builds.each do |build|
+          @processing_builds << build if build.processing == true && build.valid == true
         end
       end
 
+      # @return (Spaceship::Tunes::Build) The latest build for this train, sorted by upload time.
+      def latest_build
+        @builds.max_by(&:upload_date)
+      end
+
       # @param (testing_type) internal or external
-      def update_testing_status!(new_value, testing_type)
+      def update_testing_status!(new_value, testing_type, build = nil)
         data = client.build_trains(self.application.apple_id, testing_type)
+
+        build ||= latest_build if testing_type == 'external'
 
         data['trains'].each do |train|
           train["#{testing_type}Testing"]['value'] = false
           train["#{testing_type}Testing"]['value'] = new_value if train['versionString'] == version_string
+
+          # also update the builds
+          train['builds'].each do |b|
+            next if b["#{testing_type}Testing"].nil?
+            next if build.nil?
+            next if b["buildVersion"] != build.build_version
+            b["#{testing_type}Testing"]['value'] = false
+            b["#{testing_type}Testing"]['value'] = new_value if b['trainVersion'] == version_string
+          end
         end
 
         result = client.update_build_trains!(application.apple_id, testing_type, data)

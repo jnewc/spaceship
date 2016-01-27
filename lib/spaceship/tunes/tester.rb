@@ -1,7 +1,6 @@
 module Spaceship
   module Tunes
     class Tester < TunesBase
-
       # @return (String) The identifier of this tester, provided by iTunes Connect
       # @example
       #   "60f858b4-60a8-428a-963a-f943a3d68d17"
@@ -59,7 +58,6 @@ module Spaceship
       )
 
       class << self
-
         # @return (Hash) All urls for the ITC used for web requests
         def url
           raise "You have to use a subclass: Internal or External"
@@ -78,10 +76,10 @@ module Spaceship
 
         # @return (Spaceship::Tunes::Tester) Returns the tester matching the parameter
         #   as either the Tester id or email
-        # @param identifier (String) (required): Value used to filter the tester
+        # @param identifier (String) (required): Value used to filter the tester, case insensitive
         def find(identifier)
           all.find do |tester|
-            (tester.tester_id == identifier.to_s or tester.email == identifier)
+            (tester.tester_id.to_s.casecmp(identifier.to_s).zero? or tester.email.to_s.casecmp(identifier.to_s).zero?)
           end
         end
 
@@ -113,10 +111,10 @@ module Spaceship
         # @return (Spaceship::Tunes::Tester) Returns the tester matching the parameter
         #   as either the Tester id or email
         # @param app_id (String) (required): The app id to filter the testers
-        # @param identifier (String) (required): Value used to filter the tester
+        # @param identifier (String) (required): Value used to filter the tester, case insensitive
         def find_by_app(app_id, identifier)
           all_by_app(app_id).find do |tester|
-            (tester.tester_id == identifier.to_s or tester.email == identifier)
+            (tester.tester_id.to_s.casecmp(identifier.to_s).zero? or tester.email.to_s.casecmp(identifier.to_s).zero?)
           end
         end
 

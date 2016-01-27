@@ -1,17 +1,35 @@
 require 'time'
 
-# rubocop:disable Metrics/ClassLength
 module Spaceship
+  # rubocop:disable Metrics/ClassLength
   class TunesClient < Spaceship::Client
-
     # ITunesConnectError is only thrown when iTunes Connect raises an exception
     class ITunesConnectError < StandardError
     end
 
-    # ITunesConnectNoChangesError is thrown when the only error is that there were no changes
-    #   usually those errors are irrelevant
-    class ITunesConnectNoChangesError < ITunesConnectError
+    attr_reader :du_client
 
+    def initialize
+      super
+
+      @du_client = DUClient.new
+    end
+
+    class << self
+      # trailer preview screenshots are required to have a specific size
+      def video_preview_resolution_for(device, is_portrait)
+        resolutions = {
+            'iphone4' => [1136, 640],
+            'iphone6' => [1334, 750],
+            'iphone6Plus' => [2208, 1242],
+            'ipad' => [1024, 768],
+            'ipadPro' => [2732, 2048]
+        }
+
+        r = resolutions[device]
+        r = [r[1], r[0]] if is_portrait
+        r
+      end
     end
 
     #####################################################
@@ -22,60 +40,119 @@ module Spaceship
       "https://itunesconnect.apple.com/WebObjects/iTunesConnect.woa/"
     end
 
-    # Fetches the latest login URL from iTunes Connect
-    def login_url
-      cache_path = "/tmp/spaceship_itc_login_url.txt"
-      begin
-        cached = File.read(cache_path)
-      rescue Errno::ENOENT
+    # @return (Array) A list of all available teams
+    def teams
+      return @teams if @teams
+      r = request(:get, "ra/user/detail")
+      @teams = parse_response(r, 'data')['associatedAccounts']
+    end
+
+    # @return (String) The currently selected Team ID
+    def team_id
+      return @current_team_id if @current_team_id
+
+      if teams.count > 1
+        puts "The current user is in #{teams.count} teams. Pass a team ID or call `select_team` to choose a team. Using the first one for now."
       end
-      return cached if cached
+      @current_team_id ||= teams[0]['contentProvider']['contentProviderId']
+    end
 
-      host = "https://itunesconnect.apple.com"
-      begin
-        url = host + request(:get, self.class.hostname).body.match(%r{action="(/WebObjects/iTunesConnect.woa/wo/.*)"})[1]
-        raise "" unless url.length > 0
+    # Set a new team ID which will be used from now on
+    def team_id=(team_id)
+      response = request(:post) do |req|
+        req.url "ra/v1/session/webSession"
+        req.body = { contentProviderId: team_id }.to_json
+        req.headers['Content-Type'] = 'application/json'
+      end
 
-        File.write(cache_path, url)
-        return url
-      rescue => ex
-        puts ex
-        raise "Could not fetch the login URL from iTunes Connect, the server might be down"
+      handle_itc_response(response.body)
+
+      @current_team_id = team_id
+    end
+
+    # Shows a team selection for the user in the terminal. This should not be
+    # called on CI systems
+    def select_team
+      t_id = (ENV['FASTLANE_ITC_TEAM_ID'] || '').strip
+      t_name = (ENV['FASTLANE_ITC_TEAM_NAME'] || '').strip
+
+      if t_name.length > 0
+        teams.each do |t|
+          t_id = t['contentProvider']['contentProviderId'].to_s if t['contentProvider']['name'].downcase == t_name.downcase
+        end
+      end
+
+      t_id = teams.first['contentProvider']['contentProviderId'].to_s if teams.count == 1
+
+      if t_id.length > 0
+        # actually set the team id here
+        self.team_id = t_id
+        return
+      end
+
+      # user didn't specify a team... #thisiswhywecanthavenicethings
+      loop do
+        puts "Multiple iTunes Connect teams found, please enter the number of the team you want to use: "
+        teams.each_with_index do |team, i|
+          puts "#{i + 1}) \"#{team['contentProvider']['name']}\" (#{team['contentProvider']['contentProviderId']})"
+        end
+
+        selected = ($stdin.gets || '').strip.to_i - 1
+        team_to_use = teams[selected] if selected >= 0
+
+        if team_to_use
+          self.team_id = team_to_use['contentProvider']['contentProviderId'].to_s # actually set the team id here
+          break
+        end
       end
     end
 
+    # @return (Hash) Fetches all information of the currently used team
+    def team_information
+      teams.find do |t|
+        t['teamId'] == team_id
+      end
+    end
+
+    def service_key
+      return @service_key if @service_key
+      # We need a service key from a JS file to properly auth
+      js = request(:get, "https://itunesconnect.apple.com/itc/static-resources/controllers/login_cntrl.js")
+      @service_key ||= js.body.match(/itcServiceKey = '(.*)'/)[1]
+    end
+
     def send_login_request(user, password)
-      response = request(:post, login_url, {
-        theAccountName: user,
-        theAccountPW: password
-      })
+      data = {
+        accountName: user,
+        password: password,
+        rememberMe: true
+      }
 
-      if response['Set-Cookie'] =~ /myacinfo=(\w+);/
-        # To use the session properly we'll need the following cookies:
-        #  - myacinfo
-        #  - woinst
-        #  - wosid
-        #  - itctx
-        begin
-          re = response['Set-Cookie']
+      response = request(:post) do |req|
+        req.url "https://idmsa.apple.com/appleauth/auth/signin?widgetKey=#{service_key}"
+        req.body = data.to_json
+        req.headers['Content-Type'] = 'application/json'
+        req.headers['X-Requested-With'] = 'XMLHttpRequest'
+        req.headers['Accept'] = 'application/json, text/javascript'
+      end
 
-          to_use = [
-            "myacinfo=" + re.match(/myacinfo=([^;]*)/)[1],
-            "woinst=" + re.match(/woinst=([^;]*)/)[1],
-            "itctx=" + re.match(/itctx=([^;]*)/)[1],
-            "wosid=" + re.match(/wosid=([^;]*)/)[1]
-          ]
+      # get woinst, wois, and itctx cookie values
+      request(:get, "https://itunesconnect.apple.com/WebObjects/iTunesConnect.woa/wa/route?noext")
+      request(:get, "https://itunesconnect.apple.com/WebObjects/iTunesConnect.woa")
 
-          @cookie = to_use.join(';')
-        rescue
-          raise ITunesConnectError.new, [response.body, response['Set-Cookie']].join("\n")
-        end
-
-        return @client
+      case response.status
+      when 403, 401
+        raise InvalidUserCredentialsError.new, "Invalid username and password combination. Used '#{user}' as the username."
+      when 200
+        return response
       else
-        if (response.body || "").include?("You have successfully signed out")
+        if response["Location"] == "/auth" # redirect to 2 step auth page
+          raise "spaceship / fastlane doesn't support 2 step enabled accounts yet. Please temporary disable 2 step verification until spaceship was updated."
+        elsif (response.body || "").include?('invalid="true"')
           # User Credentials are wrong
           raise InvalidUserCredentialsError.new, "Invalid username and password combination. Used '#{user}' as the username."
+        elsif (response['Set-Cookie'] || "").include?("itctx")
+          raise "Looks like your Apple ID is not enabled for iTunes Connect, make sure to be able to login online"
         else
           info = [response.body, response['Set-Cookie']]
           raise ITunesConnectError.new, info.join("\n")
@@ -92,8 +169,8 @@ module Spaceship
       data = raw['data'] || raw # sometimes it's with data, sometimes it isn't
 
       if data.fetch('sectionErrorKeys', []).count == 0 and
-        data.fetch('sectionInfoKeys', []).count == 0 and
-        data.fetch('sectionWarningKeys', []).count == 0
+         data.fetch('sectionInfoKeys', []).count == 0 and
+         data.fetch('sectionWarningKeys', []).count == 0
 
         logger.debug("Request was successful")
       end
@@ -127,8 +204,7 @@ module Spaceship
 
       if errors.count > 0 # they are separated by `.` by default
         if errors.count == 1 and errors.first == "You haven't made any changes."
-          # This is a special error for which we throw a separate exception
-          raise ITunesConnectNoChangesError.new, errors.first
+          # This is a special error which we really don't care about
         else
           raise ITunesConnectError.new, errors.join(' ')
         end
@@ -188,7 +264,7 @@ module Spaceship
       data['newApp']['name'] = { value: name }
       data['newApp']['bundleId']['value'] = bundle_id
       data['newApp']['primaryLanguage']['value'] = primary_language || 'English'
-      data['newApp']['vendorId'] = {value: sku }
+      data['newApp']['vendorId'] = { value: sku }
       data['newApp']['bundleIdSuffix']['value'] = bundle_id_suffix
       data['companyName']['value'] = company_name if company_name
       data['newApp']['appType'] = app_type
@@ -209,16 +285,21 @@ module Spaceship
 
     def create_version!(app_id, version_number)
       r = request(:post) do |req|
-        req.url "ra/apps/version/create/#{app_id}"
-        req.body = { version: version_number.to_s }.to_json
+        req.url "ra/apps/#{app_id}/platforms/ios/versions/create/"
+        req.body = {
+          version: {
+            value: version_number.to_s
+          }
+        }.to_json
         req.headers['Content-Type'] = 'application/json'
       end
 
-      parse_response(r, 'data')
+      data = parse_response(r, 'data')
+      handle_itc_response(data)
     end
 
-    def get_resolution_center(app_id)
-      r = request(:get, "ra/apps/#{app_id}/resolutionCenter?v=latest")
+    def get_resolution_center(app_id, platform)
+      r = request(:get, "ra/apps/#{app_id}/platforms/#{platform}/resolutionCenter?v=latest")
       parse_response(r, 'data')
     end
 
@@ -233,23 +314,34 @@ module Spaceship
       r = request(:get, "ra/apps/#{app_id}/overview")
       platforms = parse_response(r, 'data')['platforms']
 
-      platforms = platforms.first # That won't work for mac apps
+      # We only support platforms that exist ATM
+      platform = platforms.find do |p|
+        ['ios', 'osx', 'appletvos'].include? p['platformString']
+      end
 
-      version = platforms[(is_live ? 'deliverableVersion' : 'inFlightVersion')]
+      raise "Could not find platform ios, osx or appletvos for app #{app_id}" unless platform
+
+      # If your app has versions for both iOS and tvOS we will default to returning the iOS version for now.
+      # This is intentional as we need to do more work to support apps that have hybrid versions.
+      if platforms.length > 1
+        platform = platforms.detect { |p| p['platformString'] == "ios" }
+      end
+
+      version = platform[(is_live ? 'deliverableVersion' : 'inFlightVersion')]
       return nil unless version
       version_id = version['id']
+      version_platform = platform['platformString']
 
-      r = request(:get, "ra/apps/#{app_id}/platforms/ios/versions/#{version_id}")
+      r = request(:get, "ra/apps/#{app_id}/platforms/#{version_platform}/versions/#{version_id}")
       parse_response(r, 'data')
     end
 
-    def update_app_version!(app_id, is_live, data)
+    def update_app_version!(app_id, version_id, data)
       raise "app_id is required" unless app_id
-
-      v_text = (is_live ? 'live' : nil)
+      raise "version_id is required" unless version_id.to_i > 0
 
       r = request(:post) do |req|
-        req.url "ra/apps/version/save/#{app_id}?v=#{v_text}"
+        req.url "ra/apps/#{app_id}/platforms/ios/versions/#{version_id}"
         req.body = data.to_json
         req.headers['Content-Type'] = 'application/json'
       end
@@ -300,6 +392,162 @@ module Spaceship
     end
 
     #####################################################
+    # @!group Pricing
+    #####################################################
+
+    def update_price_tier!(app_id, price_tier)
+      r = request(:get, "ra/apps/#{app_id}/pricing/intervals")
+      data = parse_response(r, 'data')
+
+      first_price = (data["pricingIntervalsFieldTO"]["value"] || []).count == 0 # first price
+      data["pricingIntervalsFieldTO"]["value"] ||= []
+      data["pricingIntervalsFieldTO"]["value"] << {} if data["pricingIntervalsFieldTO"]["value"].count == 0
+      data["pricingIntervalsFieldTO"]["value"].first["tierStem"] = price_tier.to_s
+
+      effective_date = (first_price ? nil : Time.now.to_i * 1000)
+      data["pricingIntervalsFieldTO"]["value"].first["priceTierEffectiveDate"] = effective_date
+      data["pricingIntervalsFieldTO"]["value"].first["priceTierEndDate"] = nil
+      data["countriesChanged"] = first_price
+      data["theWorld"] = true
+
+      if first_price # first price, need to set all countries
+        data["countries"] = supported_countries.collect do |c|
+          c.delete('region') # we don't care about le region
+          c
+        end
+      end
+
+      # send the changes back to Apple
+      r = request(:post) do |req|
+        req.url "ra/apps/#{app_id}/pricing/intervals"
+        req.body = data.to_json
+        req.headers['Content-Type'] = 'application/json'
+      end
+      handle_itc_response(r.body)
+    end
+
+    def price_tier(app_id)
+      r = request(:get, "ra/apps/#{app_id}/pricing/intervals")
+      data = parse_response(r, 'data')
+
+      begin
+        data["pricingIntervalsFieldTO"]["value"].first["tierStem"]
+      rescue
+        nil
+      end
+    end
+
+    # An array of supported countries
+    # [{
+    #   "code": "AL",
+    #   "name": "Albania",
+    #   "region": "Europe"
+    # }, {
+    # ...
+    def supported_countries
+      r = request(:get, "ra/apps/pricing/supportedCountries")
+      parse_response(r, 'data')
+    end
+
+    #####################################################
+    # @!group App Icons
+    #####################################################
+    # Uploads a large icon
+    # @param app_version (AppVersion): The version of your app
+    # @param upload_image (UploadFile): The icon to upload
+    # @return [JSON] the response
+    def upload_large_icon(app_version, upload_image)
+      raise "app_version is required" unless app_version
+      raise "upload_image is required" unless upload_image
+
+      du_client.upload_large_icon(app_version, upload_image, content_provider_id, sso_token_for_image)
+    end
+
+    # Uploads a watch icon
+    # @param app_version (AppVersion): The version of your app
+    # @param upload_image (UploadFile): The icon to upload
+    # @return [JSON] the response
+    def upload_watch_icon(app_version, upload_image)
+      raise "app_version is required" unless app_version
+      raise "upload_image is required" unless upload_image
+
+      du_client.upload_watch_icon(app_version, upload_image, content_provider_id, sso_token_for_image)
+    end
+
+    # Uploads a screenshot
+    # @param app_version (AppVersion): The version of your app
+    # @param upload_image (UploadFile): The image to upload
+    # @param device (string): The target device
+    # @return [JSON] the response
+    def upload_screenshot(app_version, upload_image, device)
+      raise "app_version is required" unless app_version
+      raise "upload_image is required" unless upload_image
+      raise "device is required" unless device
+
+      du_client.upload_screenshot(app_version, upload_image, content_provider_id, sso_token_for_image, device)
+    end
+
+    # Uploads the transit app file
+    # @param app_version (AppVersion): The version of your app
+    # @param upload_file (UploadFile): The image to upload
+    # @return [JSON] the response
+    def upload_geojson(app_version, upload_file)
+      raise "app_version is required" unless app_version
+      raise "upload_file is required" unless upload_file
+
+      du_client.upload_geojson(app_version, upload_file, content_provider_id, sso_token_for_image)
+    end
+
+    # Uploads the transit app file
+    # @param app_version (AppVersion): The version of your app
+    # @param upload_trailer (UploadFile): The trailer to upload
+    # @return [JSON] the response
+    def upload_trailer(app_version, upload_trailer)
+      raise "app_version is required" unless app_version
+      raise "upload_trailer is required" unless upload_trailer
+
+      du_client.upload_trailer(app_version, upload_trailer, content_provider_id, sso_token_for_video)
+    end
+
+    # Uploads the trailer preview
+    # @param app_version (AppVersion): The version of your app
+    # @param upload_trailer_preview (UploadFile): The trailer preview to upload
+    # @return [JSON] the response
+    def upload_trailer_preview(app_version, upload_trailer_preview)
+      raise "app_version is required" unless app_version
+      raise "upload_trailer_preview is required" unless upload_trailer_preview
+
+      du_client.upload_trailer_preview(app_version, upload_trailer_preview, content_provider_id, sso_token_for_image)
+    end
+
+    # Fetches the App Version Reference information from ITC
+    # @return [AppVersionRef] the response
+    def ref_data
+      r = request(:get, '/WebObjects/iTunesConnect.woa/ra/apps/version/ref')
+      data = parse_response(r, 'data')
+      Spaceship::Tunes::AppVersionRef.factory(data)
+    end
+
+    # Fetches the User Detail information from ITC. This gets called often and almost never changes
+    # so we cache it
+    # @return [UserDetail] the response
+    def user_detail_data
+      return @cached if @cached
+      r = request(:get, '/WebObjects/iTunesConnect.woa/ra/user/detail')
+      data = parse_response(r, 'data')
+      @cached ||= Spaceship::Tunes::UserDetail.factory(data)
+    end
+
+    #####################################################
+    # @!group CandiateBuilds
+    #####################################################
+
+    def candidate_builds(app_id, version_id)
+      r = request(:get, "ra/apps/#{app_id}/versions/#{version_id}/candidateBuilds")
+      parse_response(r, 'data')['builds']
+    end
+
+    #####################################################
     # @!group Build Trains
     #####################################################
 
@@ -331,11 +579,38 @@ module Spaceship
       handle_itc_response(r.body)
     end
 
-    def submit_testflight_build_for_review!( # Required:
-                                            app_id: nil,
-                                            train: nil,
-                                            build_number: nil,
+    def update_build_information!(app_id: nil,
+                                  train: nil,
+                                  build_number: nil,
 
+                                  # optional:
+                                  whats_new: nil,
+                                  description: nil,
+                                  feedback_email: nil)
+      url = "ra/apps/#{app_id}/platforms/ios/trains/#{train}/builds/#{build_number}/testInformation"
+      r = request(:get) do |req|
+        req.url url
+        req.headers['Content-Type'] = 'application/json'
+      end
+      handle_itc_response(r.body)
+
+      build_info = r.body['data']
+      build_info["details"].each do |current|
+        current["whatsNew"]["value"] = whats_new if whats_new
+        current["description"]["value"] = description if description
+        current["feedbackEmail"]["value"] = feedback_email if feedback_email
+      end
+
+      # Now send everything back to iTC
+      r = request(:post) do |req| # same URL, but a POST request
+        req.url url
+        req.body = build_info.to_json
+        req.headers['Content-Type'] = 'application/json'
+      end
+      handle_itc_response(r.body)
+    end
+
+    def submit_testflight_build_for_review!(app_id: nil, train: nil, build_number: nil,
                                             # Required Metadata:
                                             changelog: nil,
                                             description: nil,
@@ -345,6 +620,7 @@ module Spaceship
                                             last_name: nil,
                                             review_email: nil,
                                             phone_number: nil,
+                                            significant_change: false,
 
                                             # Optional Metadata:
                                             privacy_policy_url: nil,
@@ -352,14 +628,7 @@ module Spaceship
                                             review_password: nil,
                                             encryption: false)
 
-      start_url = "ra/apps/#{app_id}/trains/#{train}/builds/#{build_number}/submit/start"
-      r = request(:get) do |req|
-        req.url start_url
-        req.headers['Content-Type'] = 'application/json'
-      end
-      handle_itc_response(r.body)
-
-      build_info = r.body['data']
+      build_info = get_build_info_for_review(app_id: app_id, train: train, build_number: build_number)
       # Now fill in the values provided by the user
 
       # First the localised values:
@@ -371,6 +640,8 @@ module Spaceship
         current['privacyPolicyUrl']['value'] = privacy_policy_url
         current['pageLanguageValue'] = current['language'] # There is no valid reason why we need this, only iTC being iTC
       end
+      build_info['significantChange'] ||= {}
+      build_info['significantChange']['value'] = significant_change
       build_info['testInfo']['reviewFirstName']['value'] = first_name
       build_info['testInfo']['reviewLastName']['value'] = last_name
       build_info['testInfo']['reviewPhone']['value'] = phone_number
@@ -379,42 +650,83 @@ module Spaceship
       build_info['testInfo']['reviewPassword']['value'] = review_password
 
       r = request(:post) do |req| # same URL, but a POST request
-        req.url start_url
+        req.url "ra/apps/#{app_id}/trains/#{train}/builds/#{build_number}/submit/start"
+
         req.body = build_info.to_json
         req.headers['Content-Type'] = 'application/json'
       end
       handle_itc_response(r.body)
 
       encryption_info = r.body['data']
-      if encryption_info['exportComplianceRequired']
-        # only sometimes this is required
+      update_encryption_compliance(app_id: app_id,
+                                   train: train,
+                                   build_number: build_number,
+                                   encryption_info: encryption_info,
+                                   encryption: encryption)
+    end
 
-        encryption_info['usesEncryption']['value'] = encryption
-
-        r = request(:post) do |req|
-          req.url "ra/apps/#{app_id}/trains/#{train}/builds/#{build_number}/submit/complete"
-          req.body = encryption_info.to_json
-          req.headers['Content-Type'] = 'application/json'
-        end
-
-        handle_itc_response(r.body)
+    def get_build_info_for_review(app_id: nil, train: nil, build_number: nil)
+      r = request(:get) do |req|
+        req.url "ra/apps/#{app_id}/trains/#{train}/builds/#{build_number}/submit/start"
+        req.headers['Content-Type'] = 'application/json'
       end
+      handle_itc_response(r.body)
+
+      r.body['data']
+    end
+
+    def update_encryption_compliance(app_id: nil, train: nil, build_number: nil, encryption_info: nil, encryption: nil)
+      return unless encryption_info['exportComplianceRequired']
+      # only sometimes this is required
+
+      encryption_info['usesEncryption']['value'] = encryption
+      encryption_info['encryptionUpdated'] ||= {}
+      encryption_info['encryptionUpdated']['value'] = encryption
+
+      r = request(:post) do |req|
+        req.url "ra/apps/#{app_id}/trains/#{train}/builds/#{build_number}/submit/complete"
+        req.body = encryption_info.to_json
+        req.headers['Content-Type'] = 'application/json'
+      end
+
+      handle_itc_response(r.body)
     end
 
     #####################################################
     # @!group Submit for Review
     #####################################################
 
-    def send_app_submission(app_id, data, stage)
+    def prepare_app_submissions(app_id, version)
+      raise "app_id is required" unless app_id
+      raise "version is required" unless version
+
+      r = request(:get) do |req|
+        req.url "ra/apps/#{app_id}/versions/#{version}/submit/summary"
+        req.headers['Content-Type'] = 'application/json'
+      end
+
+      handle_itc_response(r.body)
+      parse_response(r, 'data')
+    end
+
+    def send_app_submission(app_id, data)
       raise "app_id is required" unless app_id
 
+      # ra/apps/1039164429/version/submit/complete
       r = request(:post) do |req|
-        req.url "ra/apps/#{app_id}/version/submit/#{stage}"
+        req.url "ra/apps/#{app_id}/version/submit/complete"
         req.body = data.to_json
         req.headers['Content-Type'] = 'application/json'
       end
 
       handle_itc_response(r.body)
+
+      if r.body.fetch('messages').fetch('info').last == "Successful POST"
+        # success
+      else
+        raise "Something went wrong when submitting the app for review. Make sure to pass valid options to submit your app for review"
+      end
+
       parse_response(r, 'data')
     end
 
@@ -442,10 +754,10 @@ module Spaceship
               value: email
             },
             firstName: {
-              value: first_name
+              value: first_name || ""
             },
             lastName: {
-              value: last_name
+              value: last_name || ""
             },
             testing: {
               value: true
@@ -507,6 +819,21 @@ module Spaceship
 
     private
 
+    # the contentProviderIr found in the UserDetail instance
+    def content_provider_id
+      user_detail_data.content_provider_id
+    end
+
+    # the ssoTokenForImage found in the AppVersionRef instance
+    def sso_token_for_image
+      ref_data.sso_token_for_image
+    end
+
+    # the ssoTokenForVideo found in the AppVersionRef instance
+    def sso_token_for_video
+      ref_data.sso_token_for_video
+    end
+
     def update_tester_from_app!(tester, app_id, testing)
       url = tester.class.url(app_id)[:update_by_app]
       data = {
@@ -538,5 +865,5 @@ module Spaceship
       handle_itc_response(data)
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end
-# rubocop:enable Metrics/ClassLength

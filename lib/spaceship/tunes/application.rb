@@ -1,7 +1,6 @@
 module Spaceship
   module Tunes
     class Application < TunesBase
-
       # @return (String) The App identifier of this app, provided by iTunes Connect
       # @example
       #   "1013943394"
@@ -101,7 +100,7 @@ module Spaceship
       # @return (Spaceship::AppVersion) Receive the version that is currently live on the
       #  App Store. You can't modify all values there, so be careful.
       def live_version
-        if raw_data['versions'].count == 1
+        if (raw_data['versions'] || []).count == 1
           v = raw_data['versions'].last
           if ['Prepare for Upload', 'prepareForUpload'].include?(v['state']) # this only applies for the initial version
             return nil
@@ -113,21 +112,13 @@ module Spaceship
 
       # @return (Spaceship::AppVersion) Receive the version that can fully be edited
       def edit_version
-        if raw_data['versions'].count == 1
-          v = raw_data['versions'].last
-
-          unless ['Prepare for Upload', 'prepareForUpload'].include?(v['state']) # this only applies for the initial version
-            return nil # only live version, user should create a new version
-          end
-        end
-
         Spaceship::AppVersion.find(self, self.apple_id, false)
       end
 
       # @return (Spaceship::AppVersion) This will return the `edit_version` if available
       #   and fallback to the `edit_version`. Use this to just access the latest data
       def latest_version
-        edit_version || live_version
+        edit_version || live_version || Spaceship::AppVersion.find(self, self.apple_id, false) # we want to get *any* version, prefered the latest one
       end
 
       # @return (String) An URL to this specific resource. You can enter this URL into your browser
@@ -139,7 +130,7 @@ module Spaceship
       #  if everything is alright, the result will be
       #  `{"sectionErrorKeys"=>[], "sectionInfoKeys"=>[], "sectionWarningKeys"=>[], "replyConstraints"=>{"minLength"=>1, "maxLength"=>4000}, "appNotes"=>{"threads"=>[]}, "betaNotes"=>{"threads"=>[]}, "appMessages"=>{"threads"=>[]}}`
       def resolution_center
-        client.get_resolution_center(apple_id)
+        client.get_resolution_center(apple_id, platform)
       end
 
       def details
@@ -165,6 +156,35 @@ module Spaceship
         # Future: implemented -reload method
       end
 
+      # Will make sure the current edit_version matches the given version number
+      # This will either create a new version or change the version number
+      # from an existing version
+      # @return (Bool) Was something changed?
+      def ensure_version!(version_number)
+        if (e = edit_version)
+          if e.version.to_s != version_number.to_s
+            # Update an existing version
+            e.version = version_number
+            e.save!
+            return true
+          end
+          return false
+        else
+          create_version!(version_number)
+          return true
+        end
+      end
+
+      # set the price tier. This method doesn't require `save` to be called
+      def update_price_tier!(price_tier)
+        client.update_price_tier!(self.apple_id, price_tier)
+      end
+
+      # The current price tier
+      def price_tier
+        client.price_tier(self.apple_id)
+      end
+
       #####################################################
       # @!group Builds
       #####################################################
@@ -186,7 +206,21 @@ module Spaceship
           Tunes::ProcessingBuild.factory(attrs)
         end
 
-        builds.delete_if { |a| a.state == "ITC.apps.betaProcessingStatus.InvalidBinary" }
+        builds.delete_if { |a| a.state.include?("invalidBinary") }
+
+        builds
+      end
+
+      # @return [Array]A list of binaries which are in the invalid state
+      def invalid_builds
+        data = client.build_trains(apple_id, 'internal') # we need to fetch all trains here to get the builds
+
+        builds = data.fetch('processingBuilds', []).collect do |attrs|
+          attrs.merge!(build_train: self)
+          Tunes::ProcessingBuild.factory(attrs)
+        end
+
+        builds.delete_if { |a| !a.state.include?("invalidBinary") }
 
         builds
       end

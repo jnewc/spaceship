@@ -1,9 +1,12 @@
 require 'faraday' # HTTP Client
 require 'logger'
 require 'faraday_middleware'
+require 'faraday-cookie_jar'
 require 'spaceship/ui'
 require 'spaceship/helper/plist_middleware'
 require 'spaceship/helper/net_http_generic_request'
+
+Faraday::Utils.default_params_encoder = Faraday::FlatParamsEncoder
 
 if ENV["DEBUG"]
   require 'openssl'
@@ -14,9 +17,12 @@ end
 module Spaceship
   class Client
     PROTOCOL_VERSION = "QH65B2"
+    USER_AGENT = "Spaceship #{Spaceship::VERSION}"
 
     attr_reader :client
-    attr_accessor :cookie
+
+    # The user that is currently logged in
+    attr_accessor :user
 
     # The logger in which all requests are logged
     # /tmp/spaceship[time].log by default
@@ -29,6 +35,9 @@ module Spaceship
     class NoUserCredentialsError < StandardError; end
 
     class UnexpectedResponse < StandardError; end
+
+    # Raised when 302 is received from portal request
+    class AppleTimeoutError < StandardError; end
 
     # Authenticates with Apple's web services. This method has to be called once
     # to generate a valid session. The session will automatically be used from then
@@ -57,10 +66,12 @@ module Spaceship
     end
 
     def initialize
+      @cookie = HTTP::CookieJar.new
       @client = Faraday.new(self.class.hostname) do |c|
         c.response :json, content_type: /\bjson$/
         c.response :xml, content_type: /\bxml$/
         c.response :plist, content_type: /\bplist$/
+        c.use :cookie_jar, jar: @cookie
         c.adapter Faraday.default_adapter
 
         if ENV['DEBUG']
@@ -76,7 +87,7 @@ module Spaceship
     # /tmp/spaceship[time].log by default
     def logger
       unless @logger
-        if $verbose || ENV["VERBOSE"]
+        if ENV["VERBOSE"]
           @logger = Logger.new(STDOUT)
         else
           # Log to file by default
@@ -90,6 +101,14 @@ module Spaceship
       end
 
       @logger
+    end
+
+    ##
+    # Return the session cookie.
+    #
+    # @return (String) the cookie-string in the RFC6265 format: https://tools.ietf.org/html/rfc6265#section-4.2.1
+    def cookie
+      @cookie.map(&:to_s).join(';')
     end
 
     #####################################################
@@ -139,27 +158,35 @@ module Spaceship
       if user.to_s.empty? or password.to_s.empty?
         require 'credentials_manager'
 
-        data = CredentialsManager::AccountManager.new(user: user, password: password)
-        user ||= data.user
-        password = data.password
+        keychain_entry = CredentialsManager::AccountManager.new(user: user, password: password)
+        user ||= keychain_entry.user
+        password = keychain_entry.password
       end
 
       if user.to_s.strip.empty? or password.to_s.strip.empty?
         raise NoUserCredentialsError.new, "No login data provided"
       end
 
-      send_login_request(user, password) # different in subclasses
-    end
+      self.user = user
 
-    # @return (Bool) Do we have a valid session?
-    def session?
-      !!@cookie
+      begin
+        send_login_request(user, password) # different in subclasses
+      rescue InvalidUserCredentialsError => ex
+        raise ex unless keychain_entry
+
+        if keychain_entry.invalid_credentials
+          login(user)
+        else
+          puts "Please run this tool again to apply the new password"
+        end
+      end
     end
 
     def with_retry(tries = 5, &block)
       return block.call
-    rescue Faraday::Error::TimeoutError => ex # New Faraday version: Faraday::TimeoutError => ex
+    rescue Faraday::Error::TimeoutError, AppleTimeoutError => ex # New Faraday version: Faraday::TimeoutError => ex
       unless (tries -= 1).zero?
+        logger.warn("Timeout received: '#{ex.message}'.  Retrying after 3 seconds (remaining: #{tries})...")
         sleep 3
         retry
       end
@@ -185,11 +212,8 @@ module Spaceship
     end
 
     def request(method, url_or_path = nil, params = nil, headers = {}, &block)
-      if session?
-        headers.merge!({'Cookie' => cookie})
-        headers.merge!(csrf_tokens)
-      end
-      headers.merge!({'User-Agent' => 'spaceship'})
+      headers.merge!(csrf_tokens)
+      headers.merge!({ 'User-Agent' => USER_AGENT })
 
       # Before encoding the parameters, log them
       log_request(method, url_or_path, params)
@@ -225,15 +249,19 @@ module Spaceship
     # Automatically retries the request up to 3 times if something goes wrong
     def send_request(method, url_or_path, params, headers, &block)
       with_retry do
-        @client.send(method, url_or_path, params, headers, &block)
+        response = @client.send(method, url_or_path, params, headers, &block)
+        if response.body.to_s.include?("<title>302 Found</title>")
+          raise AppleTimeoutError.new, "Apple 302 detected"
+        end
+        return response
       end
     end
 
     def parse_response(response, expected_key = nil)
-      if expected_key
-        content = response.body[expected_key]
-      else
-        content = response.body
+      if response.body
+        # If we have an `expected_key`, select that from response.body Hash
+        # Else, don't.
+        content = expected_key ? response.body[expected_key] : response.body
       end
 
       if content.nil?
@@ -246,7 +274,7 @@ module Spaceship
 
     def encode_params(params, headers)
       params = Faraday::Utils::ParamsHash[params].to_query
-      headers = {'Content-Type' => 'application/x-www-form-urlencoded'}.merge(headers)
+      headers = { 'Content-Type' => 'application/x-www-form-urlencoded' }.merge(headers)
       return params, headers
     end
   end

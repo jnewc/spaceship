@@ -21,15 +21,17 @@ module Spaceship
   class Base
     class DataHash
       def initialize(hash)
-        @hash = hash
+        @hash = hash || {}
       end
 
       def get(*keys)
         lookup(keys)
       end
-      alias [] get
+
+      alias_method :[], :get
 
       def set(keys, value)
+        raise "'keys' must be an array, got #{keys.class} instead" unless keys.kind_of?(Array)
         last = keys.pop
         ref = lookup(keys) || @hash
         ref[last] = value
@@ -201,7 +203,7 @@ module Spaceship
       @attributes ||= []
       par = []
 
-      par = (self.superclass.attributes || []) unless (self == Base)
+      par = (self.superclass.attributes || []) unless self == Base
 
       @attributes + par
     end

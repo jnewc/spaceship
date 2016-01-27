@@ -2,7 +2,6 @@ module Spaceship
   module Tunes
     # Represents a build which is inside the build train
     class Build < TunesBase
-
       #####################################################
       # @!group General metadata
       #####################################################
@@ -21,6 +20,9 @@ module Spaceship
 
       # @return (String) The version number (e.g. 1.3)
       attr_accessor :train_version
+
+      # @return (Boolean) Is this build currently processing?
+      attr_accessor :processing
 
       # @return (Integer) The number of ticks since 1970 (e.g. 1413966436000)
       attr_accessor :upload_date
@@ -80,6 +82,7 @@ module Spaceship
         'platform' => :platform,
         'id' => :id,
         'valid' => :valid,
+        'processing' => :processing,
 
         'installCount' => :install_count,
         'internalInstallCount' => :internal_install_count,
@@ -107,6 +110,21 @@ module Spaceship
 
         self.external_expiry_date ||= 0
         self.internal_expiry_date ||= 0
+      end
+
+      def update_build_information!(whats_new: nil,
+                                    description: nil,
+                                    feedback_email: nil)
+        parameters = {
+          app_id: self.build_train.application.apple_id,
+          train: self.build_train.version_string,
+          build_number: self.build_version
+        }.merge({
+          whats_new: whats_new,
+          description: description,
+          feedback_email: feedback_email
+        })
+        client.update_build_information!(parameters)
       end
 
       # This will submit this build for TestFlight beta review
@@ -147,6 +165,7 @@ module Spaceship
           last_name: "Krause",
           review_email: "contact@company.com",
           phone_number: "0123456789",
+          significant_change: false,
 
           # Optional Metadata:
           privacy_policy_url: nil,

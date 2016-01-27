@@ -13,6 +13,8 @@ In general the classes are pre-fixed with the `Tunes` module.
 
 ```ruby
 Spaceship::Tunes.login("felix@krausefx.com", "password")
+
+Spaceship::Tunes.select_team # call this method to let the user select a team
 ```
 
 ## Applications
@@ -53,6 +55,12 @@ details.privacy_url['en-US'] = "https://fastlane.tools"
 details.save!
 ```
 
+To change the price of the app (it's not necessary to call `save!` when updating the price)
+
+```ruby
+version.update_price_tier("3")
+```
+
 ## AppVersions
 
 <img src="/assets/docs/AppVersions.png" width="500">
@@ -84,7 +92,16 @@ v.copyright = "#{Time.now.year} Felix Krause"
 v.description.languages # => ["German", "English"]
 
 # Update localised app metadata
-v.description["English"] = "App Description"
+v.description["en-US"] = "App Description"
+
+# set the app age rating
+v.set_rating({
+  'CARTOON_FANTASY_VIOLENCE' => 0,
+  'MATURE_SUGGESTIVE' => 2,
+  'UNRESTRICTED_WEB_ACCESS' => 0
+})
+# Available values:
+# https://github.com/KrauseFx/deliver/blob/master/Reference.md
 
 # Push the changes back to the server
 v.save!
@@ -148,7 +165,17 @@ attr_reader :screenshots
 
 **Important**: For a complete documentation with the return type, description and notes for each of the properties, check out [app_version.rb](https://github.com/fastlane/spaceship/blob/master/lib/spaceship/tunes/app_version.rb).
 
-## Build Trains
+## Select a build for review
+
+```ruby
+version = app.edit_version
+
+builds = version.candidate_builds
+version.select_build(builds.first)
+version.save!
+```
+
+## Build Trains (TestFlight)
 
 <img src="/assets/docs/BuildTrains.png" width="700">
 
@@ -164,7 +191,7 @@ A build train contains all builds for a give `version number` (e.g. `0.9.21`). W
 train = app.build_trains["0.9.21"]
 
 train.version_string          # => "0.9.21"
-train.testing_enabled         # => false, as testing is enabled for 0.9.20
+train.external_testing_enabled         # => false, as external testing is enabled for 0.9.20
 
 # Access all builds for a given train
 train.builds.count            # => 1
@@ -173,7 +200,7 @@ build = train.builds.first
 # Enable beta testing for a build train
 # This will put the latest build into beta testing mode
 # and turning off beta testing for all other build trains
-train.update_testing_status!(true, 'internal')
+train.update_testing_status!(true, 'external')
 ```
 
 ## Builds
@@ -199,6 +226,7 @@ parameters = {
   last_name: "Krause",
   review_email: "contact@company.com",
   phone_number: "0123456789",
+  significant_change: false,
 
   # Optional Metadata:
   privacy_policy_url: nil,
@@ -223,7 +251,7 @@ app.all_processing_builds       # => Array of processing builds for this applica
 submission = app.create_submission
 
 # Set app submission information
-submission.content_rights_contains_third_party_content = true
+submission.content_rights_contains_third_party_content = false
 submission.content_rights_has_rights = true
 submission.add_id_info_uses_idfa = false
 

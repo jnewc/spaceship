@@ -13,8 +13,11 @@ module Spaceship
       # @return (Hash) A hash representing the app name in all languages
       attr_reader :name
 
-      # @return (Hash) A hash representing the keywords in all languages
+      # @return (Hash) A hash representing the privacy URL in all languages
       attr_reader :privacy_url
+
+      # @return (Hash) Some bla bla about privacy
+      attr_reader :apple_tv_privacy_policy
 
       # Categories (e.g. MZGenre.Business)
       attr_accessor :primary_category
@@ -54,7 +57,8 @@ module Spaceship
       def unfold_languages
         {
           name: :name,
-          privacyPolicyUrl: :privacy_url
+          privacyPolicyUrl: :privacy_url,
+          privacyPolicy: :apple_tv_privacy_policy
         }.each do |json, attribute|
           instance_variable_set("@#{attribute}".to_sym, LanguageItem.new(json, languages))
         end
@@ -63,6 +67,12 @@ module Spaceship
       # Push all changes that were made back to iTunes Connect
       def save!
         client.update_app_details!(application.apple_id, raw_data)
+      rescue Spaceship::TunesClient::ITunesConnectError => ex
+        if ex.to_s == "operation_failed"
+          # That's alright, we get this error message if nothing has changed
+        else
+          raise ex
+        end
       end
 
       # Custom Setters

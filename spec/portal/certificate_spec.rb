@@ -66,19 +66,28 @@ describe Spaceship::Certificate do
       x509 = OpenSSL::X509::Certificate.new(cert.download)
       expect(x509.issuer.to_s).to match('Apple Worldwide Developer Relations')
     end
+
+    it "handles failed download request" do
+      adp_stub_download_certificate_failure
+
+      error_text = /^Couldn't download certificate, got this instead:/
+      expect do
+        cert.download
+      end.to raise_error(Spaceship::Client::UnexpectedResponse, error_text)
+    end
   end
 
   describe '#revoke' do
     let(:cert) { Spaceship::Portal::Certificate.all.first }
     it 'revokes certificate by the given cert id' do
-      expect(client).to receive(:revoke_certificate!).with('XC5PH8DAAA', 'R58UK2EAAA')
+      expect(client).to receive(:revoke_certificate!).with('XC5PH8DAAA', 'R58UK2EAAA', mac: false)
       cert.revoke!
     end
   end
 
   describe '#create' do
     it 'should create and return a new certificate' do
-      expect(client).to receive(:create_certificate!).with('3BQKVH9I2X', /BEGIN CERTIFICATE REQUEST/, 'B7JBD8LHAA') {
+      expect(client).to receive(:create_certificate!).with('UPV3DW712I', /BEGIN CERTIFICATE REQUEST/, 'B7JBD8LHAA') {
         JSON.parse(adp_read_fixture_file('certificateCreate.certRequest.json'))
       }
       csr, pkey = Spaceship::Portal::Certificate.create_certificate_signing_request
@@ -87,7 +96,7 @@ describe Spaceship::Certificate do
     end
 
     it 'should create a new certificate using a CSR from a file' do
-      expect(client).to receive(:create_certificate!).with('3BQKVH9I2X', /BEGIN CERTIFICATE REQUEST/, 'B7JBD8LHAA') {
+      expect(client).to receive(:create_certificate!).with('UPV3DW712I', /BEGIN CERTIFICATE REQUEST/, 'B7JBD8LHAA') {
         JSON.parse(adp_read_fixture_file('certificateCreate.certRequest.json'))
       }
       csr, pkey = Spaceship::Portal::Certificate.create_certificate_signing_request

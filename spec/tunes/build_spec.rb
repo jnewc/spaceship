@@ -18,15 +18,15 @@ describe Spaceship::Tunes::Build do
       build = train.builds.first
 
       expect(build.build_train).to eq(train)
-      expect(build.upload_date).to eq(1443144470000)
+      expect(build.upload_date).to eq(1_443_144_470_000)
       expect(build.valid).to eq(true)
-      expect(build.id).to eq(5577102)
+      expect(build.id).to eq(5_577_102)
       expect(build.build_version).to eq("10")
       expect(build.train_version).to eq("1.0")
       expect(build.icon_url).to eq('https://is3-ssl.mzstatic.com/image/thumb/Newsstand3/v4/94/80/28/948028c9-59e7-7b29-e75b-f57e97421ece/Icon-76@2x.png.png/150x150bb-80.png')
       expect(build.app_name).to eq('Updated by fastlane')
       expect(build.platform).to eq('ios')
-      expect(build.internal_expiry_date).to eq(1445737214000)
+      expect(build.internal_expiry_date).to eq(1_445_737_214_000)
       expect(build.external_expiry_date).to eq(0)
       expect(build.internal_testing_enabled).to eq(true)
       expect(build.external_testing_enabled).to eq(false)
@@ -42,12 +42,17 @@ describe Spaceship::Tunes::Build do
     end
 
     describe "#testing_status" do
+      before do
+        now = Time.at(1_444_440_842)
+        allow(Time).to receive(:now) { now }
+      end
+
       it "properly describes a build" do
         build1 = app.build_trains.values.first.builds.first
         expect(build1.testing_status).to eq("Internal")
 
         build2 = app.build_trains.values.last.builds.first
-        expect(build1.testing_status).to eq("Internal")
+        expect(build2.testing_status).to eq("Inactive")
       end
     end
 
@@ -78,10 +83,11 @@ describe Spaceship::Tunes::Build do
           last_name: "Krause",
           review_email: "contact@company.com",
           phone_number: "0123456789",
+          significant_change: false,
           privacy_policy_url: nil,
           review_user_name: nil,
           review_password: nil,
-          encryption: false})
+          encryption: false })
       end
     end
   end
