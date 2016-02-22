@@ -353,42 +353,65 @@ module Spaceship
     # @!group Analytics
     #####################################################
 
-    def analytics_applist(apps, measures, start_date, end_date)
-        puts "analytics_applist: " + start_date.to_s + " " + end_date.to_s
-        data = {
-            adamId: apps,
-            measures: measures,
-            frequency: "DAY",
-            startTime: start_date.to_s + "T00:00:00Z",
-            endTime: end_date.to_s  + "T00:00:00Z"
-        }
-
-        r = request(:post) do |req|
-          req.url "https://analytics.itunes.apple.com/analytics/api/v1/data/app-list"
-          req.body = data.to_json
-          req.headers['Content-Type'] = 'application/json'
-          req.headers['X-Requested-By'] = 'analytics.itunes.apple.com'
-        end
-        parse_response(r, 'results')
-    end
-
-    def analytics_time_series(apps, measures, start_date, end_date)
-      puts "analytic_time_series: " + start_date.to_s + " " + end_date.to_s
+    def get_analytics(endpoint, apps, measures, start_date, end_date, expected_key='results')
       data = {
           adamId: apps,
-          measures: measures,
-          frequency: "DAY",
-          startTime: start_date.to_s + "T00:00:00Z",
-          endTime: end_date.to_s  + "T00:00:00Z"
+          measures: measures
       }
 
+      if(start_date && end_date)
+        data['frequency'] = "DAY"
+        data['startTime'] = start_date.to_s + "T00:00:00Z"
+        data['endTime'] = end_date.to_s  + "T00:00:00Z"
+      end
+
       r = request(:post) do |req|
-        req.url "https://analytics.itunes.apple.com/analytics/api/v1/data/time-series"
+        req.url "https://analytics.itunes.apple.com/analytics/api/v1/data/" + endpoint
         req.body = data.to_json
         req.headers['Content-Type'] = 'application/json'
         req.headers['X-Requested-By'] = 'analytics.itunes.apple.com'
       end
-      parse_response(r, 'results')
+      parse_response(r, expected_key)
+    end
+
+    def analytics_applist(apps, measures, start_date, end_date)
+        puts "analytics_applist: " + start_date.to_s + " " + end_date.to_s
+        get_analytics("app-list", apps, measures, start_date, end_date)
+    end
+
+    def analytics_time_series(apps, measures, start_date, end_date)
+      puts "analytic_time_series: " + start_date.to_s + " " + end_date.to_s
+      get_analytics("time-series", apps, measures, start_date, end_date)
+    end
+
+    def analytics_measures(apps, measures, start_date, end_date)
+      puts "analytics_measures: " + start_date.to_s + " " + end_date.to_s
+      get_analytics("/app/detail/measures", apps, measures, start_date, end_date)
+    end
+
+    def analytics_all_time(apps, measures)
+      puts "analytics_all_time: "
+      get_analytics("app/detail/all-time", apps, measures, nil, nil, "data")
+    end
+
+    #####################################################
+    # @!group Reviews
+    #####################################################
+
+    def all_reviews(app_id, country_code)
+      raise app_id required unless app_id
+      raise country_code required unless country_code
+
+      r = request(:get, "https://itunes.apple.com/#{country_code}/rss/customerreviews/id=#{app_id}/sortBy=mostRecent/json")
+
+      response = JSON.parse(parse_response(r).to_s)
+      entries = response['feed']['entry']
+
+      app_entry = entries.shift
+      return {
+        app: app_entry,
+        entries: entries
+      }
     end
 
     #####################################################
